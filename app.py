@@ -19,7 +19,35 @@ from failed_session_analyzer import analyze
 
 st.set_page_config(page_title="Charging Session Report Generator", page_icon="⚡", layout="centered")
 
-st.title("⚡ Charging Session Report Generator")
+# --------------------------------------------------------------------------
+# Simple password gate - the real password lives in Streamlit Secrets,
+# NOT in this file, so it's safe even though this repo is public on GitHub.
+# --------------------------------------------------------------------------
+def check_password():
+    def password_entered():
+        if st.session_state.get("password") == st.secrets.get("APP_PASSWORD", ""):
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]
+        else:
+            st.session_state["password_correct"] = False
+
+    if st.session_state.get("password_correct", False):
+        return True
+
+    st.text_input("Enter password to continue", type="password",
+                   on_change=password_entered, key="password")
+    if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+        st.error("Incorrect password. Please try again.")
+    return False
+
+if not check_password():
+    st.stop()
+
+col1, col2 = st.columns([1, 5])
+with col1:
+    st.image("logo.png", width=80)
+with col2:
+    st.markdown("## goEgo Charging Session Report")
 st.write(
     "Upload your charging sessions file (CSV or Excel). "
     "The tool will automatically detect failed sessions and generate "
