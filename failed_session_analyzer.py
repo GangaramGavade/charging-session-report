@@ -190,12 +190,14 @@ def generate_pdf_report(df, monthly, weekly, cutoff_summary, cutoff_minutes,
     # --- Weekly summary ---------------------------------------------------
     story.append(Paragraph("Weekly Summary", h2_style))
     w_header = ["Week", "Total", "Failed", "Failed %", "Success %", "CutOff Total", "CutOff Avg"]
-    w_rows = [w_header] + [
-        [row["Week"], int(row["Total_Sessions"]), int(row["Failed_Sessions"]),
-         f"{row['Failed_%']}%", f"{row['Success_%']}%",
-         f"{row['Total_CutOff_Amount']:,.2f}", f"{row['Avg_CutOff_Amount']:,.2f}"]
-        for _, row in weekly.iterrows()
-    ]
+    def _fmt_week_row(row):
+        if row["Total_Sessions"] == "-----":
+            return [row["Week"], "-----", "-----", "-----", "-----", "-----", "-----"]
+        return [row["Week"], int(row["Total_Sessions"]), int(row["Failed_Sessions"]),
+                f"{row['Failed_%']}%", f"{row['Success_%']}%",
+                f"{row['Total_CutOff_Amount']:,.2f}", f"{row['Avg_CutOff_Amount']:,.2f}"]
+
+    w_rows = [w_header] + [_fmt_week_row(row) for _, row in weekly.iterrows()]
     weekly_table = Table(w_rows, colWidths=[24 * mm, 20 * mm, 20 * mm, 20 * mm, 20 * mm, 26 * mm, 26 * mm],
                           repeatRows=1)
     weekly_table.setStyle(TableStyle([
@@ -261,6 +263,9 @@ def analyze(file_path, output_path="Failed_Session_Report.xlsx", cutoff_minutes=
     df["Month"] = df["Started At_Parsed"].dt.to_period("M").astype(str)
     df["Week"] = df["Started At_Parsed"].dt.strftime("%G-W%V")  # ISO year-week
 
+    period_from = df["Started At_Parsed"].min()
+    period_to = df["Started At_Parsed"].max()
+
     # --- CutOff Amount as a number -------------------------------------
     df["CutOff Amount_Num"] = pd.to_numeric(df["CutOff Amount"], errors="coerce")
 
@@ -308,6 +313,31 @@ def analyze(file_path, output_path="Failed_Session_Report.xlsx", cutoff_minutes=
     weekly = weekly[["Week", "Total_Sessions", "Failed_Sessions", "Failed_%", "Success_%",
                       "Total_CutOff_Amount", "Avg_CutOff_Amount"]]
 
+    # --- Fill in any weeks with no data at all (e.g. W23 missing) so the
+    #     week sequence stays continuous, marked with "-----" ---------------
+    def _iso_weeks_between(start, end):
+        weeks = []
+        seen = set()
+        cur = start
+        while cur <= end:
+            wk = cur.strftime("%G-W%V")
+            if wk not in seen:
+                weeks.append(wk)
+                seen.add(wk)
+            cur += pd.Timedelta(days=7)
+        end_wk = end.strftime("%G-W%V")
+        if end_wk not in seen:
+            weeks.append(end_wk)
+        return weeks
+
+    if pd.notna(period_from) and pd.notna(period_to):
+        all_weeks = _iso_weeks_between(period_from, period_to)
+        weekly = weekly.set_index("Week").reindex(all_weeks).reset_index().rename(columns={"index": "Week"})
+        placeholder_cols = ["Total_Sessions", "Failed_Sessions", "Failed_%", "Success_%",
+                             "Total_CutOff_Amount", "Avg_CutOff_Amount"]
+        for col in placeholder_cols:
+            weekly[col] = weekly[col].apply(lambda v: "-----" if pd.isna(v) else v)
+
     # --- CutOff Amount band summary (only for failed sessions) -----------
     bins = [-1, 0, 50, 100, 250, 500, 1000, float("inf")]
     labels = ["0", "1-50", "51-100", "101-250", "251-500", "501-1000", "1000+"]
@@ -342,8 +372,6 @@ def analyze(file_path, output_path="Failed_Session_Report.xlsx", cutoff_minutes=
 
     # --- PDF report (one-page, styled like a formal statement) -----------
     pdf_path = str(Path(output_path).with_suffix(".pdf"))
-    period_from = df["Started At_Parsed"].min()
-    period_to = df["Started At_Parsed"].max()
     generate_pdf_report(df, monthly, weekly, cutoff_summary, cutoff_minutes,
                          pdf_path=pdf_path, period_from=period_from, period_to=period_to)
 
